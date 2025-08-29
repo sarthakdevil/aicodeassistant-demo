@@ -7,12 +7,10 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "gemini": "npx tsx src/gemini-agents.ts",
-    "manual": "npx tsx src/manual-agents.ts",
-    "setup": "npx tsx src/setup.ts",
     "dev:ts-node": "ts-node --esm src/index.ts",
     "dev:tsx": "tsx src/index.ts",
-    "web": "tsx src/app.ts",
-    "web:build": "tsc && node dist/app.js"
+    "web": "tsx src/app.ts"
+
   },
   "author": "",
   "license": "ISC",

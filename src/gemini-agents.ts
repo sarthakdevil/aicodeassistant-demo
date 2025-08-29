@@ -7,7 +7,7 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 // Initialize Gemini
-const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+const apiKey = process.env.GOOGLE_API_KEY;
 if (!apiKey) {
   console.error("❌ ERROR: No Google API key found!");
   console.error("Please set GOOGLE_API_KEY or GEMINI_API_KEY in your environment or .env file");
@@ -49,6 +49,97 @@ function convertToGeminiFunctions(tools: any[]) {
   }));
 }
 
+// Memory management for agents
+interface MemoryEntry {
+  iteration: number;
+  agent: string;
+  action: string;
+  result: string;
+  timestamp: Date;
+}
+
+class AgentMemory {
+  private entries: MemoryEntry[] = [];
+  private summaries: string[] = [];
+  private maxEntries = 10; // Keep last 10 entries to avoid quota issues
+
+  addEntry(iteration: number, agent: string, action: string, result: string) {
+    this.entries.push({
+      iteration,
+      agent,
+      action,
+      result: result.substring(0, 200), // Truncate to save tokens
+      timestamp: new Date()
+    });
+
+    // Summarize every 3 iterations to save memory
+    if (iteration > 0 && iteration % 3 === 0) {
+      this.createSummary(iteration);
+    }
+
+    // Keep only recent entries
+    if (this.entries.length > this.maxEntries) {
+      this.entries = this.entries.slice(-this.maxEntries);
+    }
+  }
+
+  private createSummary(currentIteration: number) {
+    const lastThreeIterations = this.entries.filter(entry => 
+      entry.iteration >= currentIteration - 2 && entry.iteration <= currentIteration
+    );
+
+    if (lastThreeIterations.length === 0) return;
+
+    // Create a concise summary of the last 3 iterations
+    const summary = lastThreeIterations
+      .map(entry => `${entry.agent}: ${entry.action} → ${entry.result.substring(0, 80)}`)
+      .join(" | ");
+
+    this.summaries.push(`[Iter ${currentIteration-2}-${currentIteration}]: ${summary}`);
+
+    // Keep only last 3 summaries
+    if (this.summaries.length > 3) {
+      this.summaries = this.summaries.slice(-3);
+    }
+  }
+
+  getRecentContext(currentIteration: number): string {
+    const recentEntries = this.entries
+      .filter(entry => entry.iteration < currentIteration)
+      .slice(-4); // Last 4 entries for current context
+
+    if (this.entries.length === 0 && this.summaries.length === 0) return "";
+
+    let context = "";
+    
+    // Add summaries first
+    if (this.summaries.length > 0) {
+      context += "\nSUMMARIES:\n" + this.summaries.slice(-2).join("\n") + "\n";
+    }
+    
+    // Add recent entries
+    if (recentEntries.length > 0) {
+      context += "\nRECENT:\n" + recentEntries.map(entry => 
+        `${entry.agent}: ${entry.action} → ${entry.result.substring(0, 100)}...`
+      ).join("\n");
+    }
+
+    return context;
+  }
+
+  clear() {
+    this.entries = [];
+    this.summaries = [];
+  }
+
+  getEntryCount(): number {
+    return this.entries.length;
+  }
+}
+
+// Global memory instance
+const agentMemory = new AgentMemory();
+
 // Tool execution function
 async function executeTool(toolName: string, args: any) {
   console.log(`\n🔧 Executing tool: ${toolName}`);
@@ -85,15 +176,17 @@ class SimpleGeminiAgent {
     
     // Create model with function calling - using stable Gemini 1.5 Pro
     this.model = genAI.getGenerativeModel({
-      model: "gemini-1.5-pro",
+      model: "gemini-2.0-flash",
       tools: [{ functionDeclarations: this.availableFunctions }]
     });
   }
 
-  async run(prompt: string): Promise<{ response: string; toolsUsed: string[] }> {
-    console.log(`\n🤖 ${this.name} processing...`);
+  async run(prompt: string, iteration: number = 0): Promise<{ response: string; toolsUsed: string[] }> {
+    console.log(`\n🤖 ${this.name} processing with memory context...`);
     
-    const fullPrompt = `${this.systemPrompt}\n\nTASK: ${prompt}`;
+    // Add memory context to the prompt
+    const memoryContext = agentMemory.getRecentContext(iteration);
+    const fullPrompt = `${this.systemPrompt}${memoryContext}\n\nTASK: ${prompt}`;
     
     try {
       // Start the chat session
@@ -112,6 +205,9 @@ class SimpleGeminiAgent {
           
           // Execute the function
           const functionResult = await executeTool(name, args);
+          
+          // Add to memory
+          agentMemory.addEntry(iteration, this.name, `${name}(${JSON.stringify(args)})`, functionResult);
           
           // Send function result back to continue the conversation
           try {
@@ -135,6 +231,9 @@ class SimpleGeminiAgent {
           console.log(`⚠️  ${this.name} didn't use any tools - that's okay for some responses`);
           finalResponse = "Task acknowledged.";
         }
+        
+        // Add thinking to memory too
+        agentMemory.addEntry(iteration, this.name, "thinking", finalResponse);
       }
 
       console.log(`\n${this.name} Response: ${finalResponse.substring(0, 300)}${finalResponse.length > 300 ? '...' : ''}`);
@@ -184,10 +283,12 @@ interface IterationContext {
 }
 
 async function runSimpleGeminiSystem() {
-  console.log("🚀 SIMPLE GEMINI ITERATIVE SYSTEM (Quota-Friendly)");
+  console.log("🚀 SIMPLE GEMINI ITERATIVE SYSTEM (With Memory)");
   console.log("🧠 Analyst: Investigates project structure");
   console.log("⚡ Executor: Creates and edits files");
-  console.log("⏱️ Rate-limited to avoid quota issues\n");
+  console.log("💾 Memory: Tracks actions across iterations");
+  console.log("⏱️ Rate-limited to avoid quota issues");
+  console.log("\nCommands: 'exit', 'status', 'memory'\n");
 
   let context: IterationContext = {
     count: 0,
@@ -210,11 +311,41 @@ async function runSimpleGeminiSystem() {
         const executorToolUsage = context.history.filter(h => h.agent === 'executor').reduce((sum, h) => sum + h.toolsUsed.length, 0);
         console.log(`📈 Analyst tools used: ${analystToolUsage}`);
         console.log(`📈 Executor tools used: ${executorToolUsage}`);
+        console.log(`🧠 Memory entries: ${agentMemory.getEntryCount()}`);
+        continue;
+      }
+
+      if (userInput.toLowerCase().trim() === 'memory') {
+        console.log("\n🧠 AGENT MEMORY:");
+        console.log(agentMemory.getRecentContext(999) || "No memory entries");
         continue;
       }
 
       if (context.count === 0) {
         context.originalRequest = userInput;
+        // Clear memory for new task
+        agentMemory.clear();
+        console.log("🧠 Memory cleared for new task");
+        
+        // INITIAL OBSERVATION PHASE
+        console.log(`\n${"=".repeat(60)}`);
+        console.log(`👁️  INITIAL WORKSPACE OBSERVATION`);
+        console.log(`${"=".repeat(60)}`);
+        
+        const observationPrompt = `Before starting any task, observe and understand the current workspace structure and files. 
+Use list_files to see the folder structure, then read key files to understand the project context.
+
+TASK TO PREPARE FOR: ${userInput}
+
+First, examine the workspace to understand what we're working with.`;
+        
+        const observationResult = await analystAgent.run(observationPrompt, 0);
+        console.log(`\n👁️  WORKSPACE OBSERVATION:\n${observationResult.response}`);
+        
+        // Add observation to memory
+        agentMemory.addEntry(0, "Analyst", "initial_observation", observationResult.response);
+        
+        console.log("\n📋 Workspace observed. Starting task execution...");
       }
 
       let shouldContinue = true;
@@ -232,7 +363,7 @@ async function runSimpleGeminiSystem() {
         console.log("-".repeat(40));
         
         const analystPrompt = buildAnalystPrompt(context, userInput);
-        const analystResult = await analystAgent.run(analystPrompt);
+        const analystResult = await analystAgent.run(analystPrompt, context.count);
         
         context.history.push({
           agent: 'analyst',
@@ -249,7 +380,7 @@ async function runSimpleGeminiSystem() {
         console.log("-".repeat(40));
         
         const executorPrompt = buildExecutorPrompt(context, analystResult.response);
-        const executorResult = await executorAgent.run(executorPrompt);
+        const executorResult = await executorAgent.run(executorPrompt, context.count);
         
         context.history.push({
           agent: 'executor',
@@ -352,4 +483,109 @@ function shouldContinueIterating(analystMsg: string, executorMsg: string): boole
 
 // Start the system
 console.log("🚀 Starting Simple Gemini System...\n");
-runSimpleGeminiSystem().catch(console.error);
+
+// Check if we have a CLI prompt from environment (for web bridge)
+const cliPrompt = process.env.CLI_PROMPT;
+if (cliPrompt) {
+  console.log(`📨 Received prompt from web bridge: ${cliPrompt}`);
+  runSingleIteration(cliPrompt).catch(console.error);
+} else {
+  runSimpleGeminiSystem().catch(console.error);
+}
+
+// Function to run a single iteration for web bridge
+async function runSingleIteration(userPrompt: string) {
+  console.log("🚀 SIMPLE GEMINI ITERATIVE SYSTEM (Web Bridge Mode)");
+  console.log("🧠 Analyst: Investigates project structure");
+  console.log("⚡ Executor: Creates and edits files");
+  console.log("💾 Memory: Tracks actions across iterations");
+  
+  let context: IterationContext = {
+    count: 0,
+    originalRequest: userPrompt,
+    history: []
+  };
+
+  // Clear memory for new task
+  agentMemory.clear();
+  console.log("🧠 Memory cleared for new task");
+  
+  // INITIAL OBSERVATION PHASE
+  console.log(`\n${"=".repeat(60)}`);
+  console.log(`👁️  INITIAL WORKSPACE OBSERVATION`);
+  console.log(`${"=".repeat(60)}`);
+  
+  const observationPrompt = `Before starting any task, observe and understand the current workspace structure and files. 
+Use list_files to see the folder structure, then read key files to understand the project context.
+
+TASK TO PREPARE FOR: ${userPrompt}
+
+First, examine the workspace to understand what we're working with.`;
+  
+  const observationResult = await analystAgent.run(observationPrompt, 0);
+  console.log(`\n👁️  WORKSPACE OBSERVATION:\n${observationResult.response}`);
+  
+  // Add observation to memory
+  agentMemory.addEntry(0, "Analyst", "initial_observation", observationResult.response);
+  
+  console.log("\n📋 Workspace observed. Starting task execution...");
+
+  let shouldContinue = true;
+  let maxIterations = 6;
+
+  while (shouldContinue && context.count < maxIterations) {
+    context.count++;
+    
+    console.log(`\n${"=".repeat(60)}`);
+    console.log(`🔄 ITERATION ${context.count}`);
+    console.log(`${"=".repeat(60)}`);
+
+    // ANALYST PHASE
+    console.log(`\n🧠 ANALYST PHASE...`);
+    console.log("-".repeat(40));
+    
+    const analystPrompt = buildAnalystPrompt(context, userPrompt);
+    const analystResult = await analystAgent.run(analystPrompt, context.count);
+    
+    context.history.push({
+      agent: 'analyst',
+      message: analystResult.response,
+      toolsUsed: analystResult.toolsUsed,
+      timestamp: new Date()
+    });
+
+    // Rate limiting
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // EXECUTOR PHASE  
+    console.log(`\n⚡ EXECUTOR PHASE...`);
+    console.log("-".repeat(40));
+    
+    const executorPrompt = buildExecutorPrompt(context, analystResult.response);
+    const executorResult = await executorAgent.run(executorPrompt, context.count);
+    
+    context.history.push({
+      agent: 'executor',
+      message: executorResult.response,
+      toolsUsed: executorResult.toolsUsed,
+      timestamp: new Date()
+    });
+
+    // Check if we should continue
+    shouldContinue = shouldContinueIterating(analystResult.response, executorResult.response);
+    
+    if (shouldContinue) {
+      console.log("\n🔄 Continuing to next iteration...");
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    } else {
+      console.log("\n✅ Task completed!");
+    }
+  }
+
+  if (context.count >= maxIterations) {
+    console.log("\n⏹️ Reached maximum iterations");
+  }
+
+  console.log(`\n📊 Final Status: ${context.count} iterations completed`);
+  console.log("🎯 Task execution finished");
+}
