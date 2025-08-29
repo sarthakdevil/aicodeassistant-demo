@@ -103,7 +103,7 @@ function shouldHaveUsedTools(agentResponse: string, agentType: 'analyst' | 'exec
   if (agentType === 'executor') {
     // Executor should use tools for these actions
     const actionKeywords = [
-      'create', 'write', 'add', 'modify', 'edit', 'update', 
+      'create', 'write', 'add', 'modify', 'edit', 'update',
       'run', 'execute', 'install', 'build', 'start',
       'check', 'read', 'view', 'list', 'search'
     ];
