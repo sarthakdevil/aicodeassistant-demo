@@ -341,6 +341,39 @@ export const searchInFilesTool = new DynamicStructuredTool({
   }
 });
 
+// Terminal execution tool
+export const executeInTerminalTool = new DynamicStructuredTool({
+  name: "execute_in_terminal",
+  description: "Execute a command in the terminal and return the output",
+  schema: z.object({
+    command: z.string().describe("The command to execute in the terminal"),
+    workingDirectory: z.string().optional().describe("The working directory to execute the command in (optional)")
+  }),
+  func: async (input: { command: string; workingDirectory?: string }) => {
+    const { command, workingDirectory } = input;
+    try {
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+      
+      const options: any = {};
+      if (workingDirectory) {
+        options.cwd = workingDirectory;
+      }
+      
+      const { stdout, stderr } = await execAsync(command, options);
+      
+      if (stderr) {
+        return `Command executed with errors:\nSTDOUT: ${stdout}\nSTDERR: ${stderr}`;
+      }
+      
+      return `Command executed successfully:\n${stdout}`;
+    } catch (error: any) {
+      return `Error executing command: ${error.message}`;
+    }
+  }
+});
+
 // Export all tools as an array for easy use
 export const vscodeTools = [
   createFileOrFolderTool,
@@ -348,5 +381,6 @@ export const vscodeTools = [
   readFileTool,
   editFileTool,
   moveFileOrFolderTool,
-  searchInFilesTool
+  searchInFilesTool,
+  executeInTerminalTool
 ];

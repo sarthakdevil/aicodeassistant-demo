@@ -1,4 +1,4 @@
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { HumanMessage, SystemMessage, AIMessage } from "@langchain/core/messages";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { MemorySaver } from "@langchain/langgraph";
 import llm from "./gemini/gemini.js";
@@ -21,102 +21,182 @@ function getUserInput(question: string): Promise<string> {
 
 const memory = new MemorySaver();
 
-const THINKER_SYSTEM_MESSAGE = `You are the Investigative Thinker Agent. Your PRIMARY role is to actively investigate and understand what the user is talking about by using your tools.
+// Enhanced system messages for iterative collaboration
+const ANALYST_SYSTEM_MESSAGE = `You are the Strategic Analyst Agent in an iterative collaborative system.
 
-YOUR INVESTIGATION PROCESS:
-1. **IMMEDIATELY** use list_files to examine the project structure
-2. **SEARCH FOR RELEVANT CODE** using search_in_files to find related functions, classes, or patterns the user mentions
-3. **READ KEY FILES** that are relevant to the user's request (limit to 2-3 most important files)
-4. **UNDERSTAND THE CONTEXT** - what exists, what's missing, what the user is referring to
-5. **ANALYZE THE USER'S REQUEST** in the context of what you discovered
-6. **CREATE A DETAILED PLAN** based on your investigation findings
-
-Available investigation tools: list_files, read_file, search_in_files
+YOUR ROLE IN EACH ITERATION:
+- **INVESTIGATE** using your tools (list_files, read_file, search_in_files)
+- **ANALYZE** the current situation and progress
+- **THINK STRATEGICALLY** about the next concrete steps
+- **PROVIDE SPECIFIC GUIDANCE** to the Executor agent
 
 CRITICAL RULES:
-- Use tools efficiently - don't repeat the same investigation twice
-- Focus on the most relevant files and patterns
-- Stop investigating once you have enough context to create a plan
-- Do NOT use tools unnecessarily or in loops
+- ALWAYS use tools to investigate before giving guidance
+- Be SPECIFIC about files, folders, and actions needed
+- Don't just think - INVESTIGATE and DISCOVER
+- Give the Executor clear, actionable instructions
 
-Your response format:
-INVESTIGATION FINDINGS:
-[Detailed findings from using your tools - file structure, code patterns, existing implementations]
+ITERATION BEHAVIOR:
+1. **First Iteration**: Use list_files and read_file to understand the project
+2. **Subsequent Iterations**: 
+   - Review what the Executor accomplished using tools
+   - Search for specific patterns or files as needed
+   - Provide refined, specific guidance based on actual investigation
 
-CONTEXT UNDERSTANDING:
-[What exactly the user is referring to and what currently exists in the codebase]
+Available tools: list_files, read_file, search_in_files
 
-DETAILED PLAN:
-1. [Specific step with exact file paths and actions based on investigation]
-2. [Next step with context from investigation]
-3. [Continue with precise actions]
+RESPONSE FORMAT:
+ITERATION STATUS: [Current iteration number and overall progress]
+INVESTIGATION: [What tools you used and what you discovered]
+ANALYSIS: [What you've learned from your investigation]
+STRATEGIC THINKING: [Your reasoning about next steps]
+SPECIFIC GUIDANCE FOR EXECUTOR: [Exact file paths, commands, or actions needed]`;
 
-RECOMMENDED TOOLS: [specific tools for each step]
-POTENTIAL ISSUES: [based on what you found during investigation]`;
+const EXECUTOR_SYSTEM_MESSAGE = `You are the Executor Agent in an iterative collaborative system.
 
-const DOER_SYSTEM_MESSAGE = `You are the Action-Oriented Doer Agent. Your role is to execute based on the Investigative Thinker's detailed findings.
+YOUR ROLE IN EACH ITERATION:
+- **EXECUTE** the specific guidance from the Analyst using your tools
+- **TAKE ACTION** - don't just plan, DO IT
+- **USE TOOLS** to create files, edit code, run commands, etc.
+- **REPORT BACK** detailed results of your actual actions
 
-The Thinker Agent has already:
-- Investigated the project structure using tools
-- Read relevant files to understand context
-- Created a specific plan based on real findings
+CRITICAL RULES:
+- ALWAYS use tools to perform the requested actions
+- Don't just describe what you would do - DO IT
+- Create files, edit code, run terminal commands as instructed
+- Report the actual results of your tool usage
 
-Your responsibilities:
-1. **EXECUTE THE PLAN** step by step using the exact file paths and details provided
-2. **USE THE RECOMMENDED TOOLS** as suggested by the Thinker
-3. **HANDLE ERRORS** and provide specific feedback about what went wrong
-4. **REPORT PROGRESS** after each major step
-5. **STOP when the task is complete** - don't continue unnecessarily
+ITERATION BEHAVIOR:
+1. **Read** the guidance from Analyst carefully
+2. **Execute** the recommended actions using appropriate tools
+3. **Use tools** like create_file, edit_file, execute_in_terminal, etc.
+4. **Report** exactly what tools you used and what happened
 
 Available tools: ${vscodeTools.map(tool => tool.name).join(", ")}
 
-CRITICAL RULES:
-- Follow the plan efficiently without unnecessary tool calls
-- If a step fails, try to fix it or move to the next step
-- Do NOT repeat the same action multiple times
-- STOP when you've completed the requested task
+RESPONSE FORMAT:
+ACTIONS TAKEN: [List of specific tools you used and what you did]
+EXECUTION RESULTS: [Exact results from each tool - file contents, terminal output, etc.]
+FILES CREATED/MODIFIED: [List any files you created or changed]
+STATUS: [Current state after your actions]
+READY FOR NEXT ITERATION: [What the Analyst should focus on next]`;
 
-The Thinker will provide you with:
-- INVESTIGATION FINDINGS: Real data about the project
-- CONTEXT UNDERSTANDING: What the user is actually referring to
-- DETAILED PLAN: Specific actions with file paths
-- RECOMMENDED TOOLS: Exact tools to use for each step
-
-Execute efficiently and report back with concrete results.`;
-
-const thinkerAgent = createReactAgent({
+// Create agents with shared memory
+const analystAgent = createReactAgent({
   llm: llm,
   tools: [listFilesTool, readFileTool, searchInFilesTool],
   checkpointSaver: memory,
-  messageModifier: THINKER_SYSTEM_MESSAGE
+  messageModifier: ANALYST_SYSTEM_MESSAGE
 });
 
-
-const doerAgent = createReactAgent({
+const executorAgent = createReactAgent({
   llm: llm,
   tools: vscodeTools,
   checkpointSaver: memory,
-  messageModifier: DOER_SYSTEM_MESSAGE
+  messageModifier: EXECUTOR_SYSTEM_MESSAGE
 });
 
-async function runTwoAgentSystem() {
-  console.log("🤖🔍 Two-Agent System: Investigative Thinker + Action Doer");
-  console.log("�️ Thinker: Investigates project structure, searches code, analyzes context");
-  console.log("🔧 Doer: Executes plans using tools -", vscodeTools.map(tool => tool.name).join(", "));
-  console.log("🔍 Thinker Tools: list_files, read_file, search_in_files");
-  console.log("💾 Memory enabled for both agents!");
-  console.log("Type 'exit' to quit\n");
-
-
-  const thinkerThreadId = `thinker-${Date.now()}`;
-  const doerThreadId = `doer-${Date.now()}`;
+// Function to detect if agent should have used tools but didn't
+function shouldHaveUsedTools(agentResponse: string, agentType: 'analyst' | 'executor'): boolean {
+  const response = agentResponse.toLowerCase();
   
-  console.log(`🧵 Thinker thread: ${thinkerThreadId}`);
-  console.log(`🧵 Doer thread: ${doerThreadId}\n`);
+  if (agentType === 'executor') {
+    // Executor should use tools for these actions
+    const actionKeywords = [
+      'create', 'write', 'add', 'modify', 'edit', 'update', 
+      'run', 'execute', 'install', 'build', 'start',
+      'check', 'read', 'view', 'list', 'search'
+    ];
+    
+    const hasActionKeywords = actionKeywords.some(keyword => response.includes(keyword));
+    const hasToolMentions = response.includes('tool') || response.includes('file') || response.includes('command');
+    
+    return hasActionKeywords && hasToolMentions && !response.includes('tool call') && !response.includes('executed');
+  }
+  
+  if (agentType === 'analyst') {
+    // Analyst should use tools for investigation
+    const investigationKeywords = [
+      'check', 'examine', 'look at', 'read', 'view', 'list', 'search', 'find'
+    ];
+    
+    return investigationKeywords.some(keyword => response.includes(keyword)) && 
+           !response.includes('tool call') && !response.includes('executed');
+  }
+  
+  return false;
+}
+
+// Function to force tool usage with explicit instructions
+async function forceToolUsage(agent: any, threadId: string, guidance: string, agentType: 'analyst' | 'executor'): Promise<any> {
+  const toolInstructions = agentType === 'executor' 
+    ? `URGENT: You must use tools to execute this guidance. Do not just describe - actually use create_file_or_folder, edit_file, read_file, or execute_in_terminal tools.
+
+GUIDANCE TO EXECUTE: ${guidance}
+
+Step by step:
+1. Use read_file tool to check current state
+2. Use appropriate tools to make the changes
+3. Verify with tools that changes worked
+
+YOU MUST ACTUALLY CALL TOOLS - NO DESCRIPTIONS ALLOWED!`
+    : `URGENT: You must use investigation tools. Do not just think - actually use list_files, read_file, or search_in_files tools.
+
+GUIDANCE TO INVESTIGATE: ${guidance}
+
+Step by step:
+1. Use list_files to see project structure
+2. Use read_file to examine relevant files
+3. Use search_in_files if needed
+
+YOU MUST ACTUALLY CALL TOOLS - NO THINKING WITHOUT TOOLS!`;
+
+  return await agent.invoke(
+    {
+      messages: [new HumanMessage(toolInstructions)]
+    },
+    {
+      configurable: { thread_id: threadId },
+      recursionLimit: 15
+    }
+  );
+}
+
+// Conversation history for context sharing
+interface IterationContext {
+  iterationCount: number;
+  originalRequest: string;
+  conversationHistory: Array<{
+    agent: 'analyst' | 'executor';
+    message: string;
+    timestamp: Date;
+  }>;
+  taskStatus: 'in-progress' | 'completed' | 'needs-clarification';
+}
+
+async function runIterativeAgentSystem() {
+  console.log("🤖🔄 Iterative Two-Agent Collaboration System");
+  console.log("🧠 Analyst: Strategic thinking, analysis, guidance");
+  console.log("⚡ Executor: Action-oriented, execution, reporting");
+  console.log("🔄 Process: Think → Act → Think → Act → ... until completion");
+  console.log("💾 Shared memory across iterations!");
+  console.log("Type 'exit' to quit, 'status' for current progress\n");
+
+  const analystThreadId = `analyst-${Date.now()}`;
+  const executorThreadId = `executor-${Date.now()}`;
+  
+  console.log(`🧵 Analyst thread: ${analystThreadId}`);
+  console.log(`🧵 Executor thread: ${executorThreadId}\n`);
+
+  let context: IterationContext = {
+    iterationCount: 0,
+    originalRequest: '',
+    conversationHistory: [],
+    taskStatus: 'in-progress'
+  };
 
   while (true) {
     try {
-
       const userInput = await getUserInput("\n💬 You: ");
       
       if (userInput.toLowerCase().trim() === 'exit') {
@@ -124,74 +204,165 @@ async function runTwoAgentSystem() {
         break;
       }
 
-      console.log("\n" + "=".repeat(60));
-      console.log("�️ INVESTIGATIVE THINKER: Examining project & analyzing request...");
-      console.log("=".repeat(60));
-
-      const thinkerResult = await thinkerAgent.invoke(
-        {
-          messages: [
-            new HumanMessage(`User request: ${userInput}`)
-          ]
-        },
-        {
-          configurable: {
-            thread_id: thinkerThreadId
-          },
-          recursionLimit: 10 
-        }
-      );
-
-
-      const thinkerResponse = thinkerResult.messages[thinkerResult.messages.length - 1];
-      console.log("\n🔍 Investigation Results & Plan:");
-      console.log(thinkerResponse.content);
-
-      console.log("\n" + "=".repeat(60));
-      console.log("⚡ ACTION DOER: Executing the investigated plan...");
-      console.log("=".repeat(60));
-
-
-      const doerResult = await doerAgent.invoke(
-        {
-          messages: [
-            new HumanMessage(`Original user request: ${userInput}\n\nThinker's plan:\n${thinkerResponse.content}\n\nPlease execute this plan step by step.`)
-          ]
-        },
-        {
-          configurable: {
-            thread_id: doerThreadId
-          },
-          recursionLimit: 15
-        }
-      );
-
-
-      console.log("\n🤖 Doer's Execution Result:");
-      if (doerResult.messages && doerResult.messages.length > 0) {
-        const lastMessage = doerResult.messages[doerResult.messages.length - 1];
-        console.log(lastMessage.content);
+      if (userInput.toLowerCase().trim() === 'status') {
+        console.log(`\n📊 Current Status:`);
+        console.log(`   Iterations: ${context.iterationCount}`);
+        console.log(`   Task Status: ${context.taskStatus}`);
+        console.log(`   History Length: ${context.conversationHistory.length} exchanges`);
+        continue;
       }
 
-      const toolMessages = doerResult.messages.filter(msg => msg._getType() === 'tool');
-      if (toolMessages.length > 0) {
-        console.log("\n🔧 Tools executed by Doer:");
-        toolMessages.forEach((msg, index) => {
-          console.log(`${index + 1}. ${msg.content}`);
+      // Initialize or update context
+      if (context.iterationCount === 0) {
+        context.originalRequest = userInput;
+      }
+
+      // Start iterative process
+      let shouldContinue = true;
+      let maxIterations = 10; // Prevent infinite loops
+
+      while (shouldContinue && context.iterationCount < maxIterations) {
+        context.iterationCount++;
+        
+        console.log(`\n${"=".repeat(80)}`);
+        console.log(`🔄 ITERATION ${context.iterationCount}`);
+        console.log(`${"=".repeat(80)}`);
+
+        // ANALYST PHASE
+        console.log(`\n🧠 ANALYST PHASE: Strategic thinking and guidance...`);
+        console.log("-".repeat(60));
+
+        const analystContext = buildAnalystContext(context, userInput);
+        
+        const analystResult = await analystAgent.invoke(
+          {
+            messages: [new HumanMessage(analystContext)]
+          },
+          {
+            configurable: { thread_id: analystThreadId },
+            recursionLimit: 15
+          }
+        );
+
+        const analystResponse = analystResult.messages[analystResult.messages.length - 1];
+        console.log("🧠 Analyst Output:");
+        console.log(analystResponse.content);
+        
+        // Check if analyst actually used tools
+        const analystToolUsage = analystResult.messages.filter(msg => 
+          msg.additional_kwargs?.tool_calls && msg.additional_kwargs.tool_calls.length > 0
+        );
+        if (analystToolUsage.length > 0) {
+          console.log(`📊 Analyst used ${analystToolUsage.length} tool call(s) this iteration`);
+        } else {
+          console.log("⚠️  Analyst didn't use any tools this iteration");
+          
+          // Force tool usage if analyst should have used tools
+          if (shouldHaveUsedTools(analystResponse.content as string, 'analyst')) {
+            console.log("🔧 Forcing analyst to use tools...");
+            const forcedResult = await forceToolUsage(analystAgent, analystThreadId, analystContext, 'analyst');
+            const forcedResponse = forcedResult.messages[forcedResult.messages.length - 1];
+            console.log("🧠 Analyst Output (with forced tools):");
+            console.log(forcedResponse.content);
+            
+            // Update the response to use the forced one
+            analystResponse.content = forcedResponse.content;
+          }
+        }
+
+        // Record analyst's response
+        context.conversationHistory.push({
+          agent: 'analyst',
+          message: analystResponse.content as string,
+          timestamp: new Date()
         });
+
+        // Check if analyst wants to ask user something
+        if (shouldAskUser(analystResponse.content as string)) {
+          console.log("\n❓ Analyst wants clarification from you.");
+          shouldContinue = false;
+          continue;
+        }
+
+        // EXECUTOR PHASE
+        console.log(`\n⚡ EXECUTOR PHASE: Taking action based on guidance...`);
+        console.log("-".repeat(60));
+
+        const executorContext = buildExecutorContext(context);
+        
+        const executorResult = await executorAgent.invoke(
+          {
+            messages: [new HumanMessage(executorContext)]
+          },
+          {
+            configurable: { thread_id: executorThreadId },
+            recursionLimit: 20
+          }
+        );
+
+        const executorResponse = executorResult.messages[executorResult.messages.length - 1];
+        console.log("⚡ Executor Output:");
+        console.log(executorResponse.content);
+        
+        // Check if executor actually used tools
+        const executorToolUsage = executorResult.messages.filter(msg => 
+          msg.additional_kwargs?.tool_calls && msg.additional_kwargs.tool_calls.length > 0
+        );
+        if (executorToolUsage.length > 0) {
+          console.log(`🔧 Executor used ${executorToolUsage.length} tool call(s) this iteration`);
+        } else {
+          console.log("⚠️  Executor didn't use any tools this iteration - just thinking!");
+          
+          // Force tool usage if executor should have used tools
+          if (shouldHaveUsedTools(executorResponse.content as string, 'executor')) {
+            console.log("🔧 Forcing executor to use tools...");
+            const forcedResult = await forceToolUsage(executorAgent, executorThreadId, executorContext, 'executor');
+            const forcedResponse = forcedResult.messages[forcedResult.messages.length - 1];
+            console.log("⚡ Executor Output (with forced tools):");
+            console.log(forcedResponse.content);
+            
+            // Update the response to use the forced one
+            executorResponse.content = forcedResponse.content;
+          }
+        }
+
+        // Record executor's response
+        context.conversationHistory.push({
+          agent: 'executor',
+          message: executorResponse.content as string,
+          timestamp: new Date()
+        });
+
+        // Determine if we should continue
+        shouldContinue = shouldContinueIterating(
+          analystResponse.content as string, 
+          executorResponse.content as string
+        );
+
+        if (shouldContinue) {
+          console.log("\n🔄 Continuing to next iteration...");
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Brief pause
+        } else {
+          console.log("\n✅ Task appears to be completed or needs user input.");
+          context.taskStatus = 'completed';
+        }
       }
 
-      console.log("\n" + "=".repeat(60));
-      console.log("✅ Two-Agent Loop Completed");
-      console.log("=".repeat(60));
+      if (context.iterationCount >= maxIterations) {
+        console.log("\n⚠️  Reached maximum iterations. Please provide more specific guidance or break the task into smaller parts.");
+      }
+
+      console.log(`\n${"=".repeat(80)}`);
+      console.log(`🏁 ITERATION CYCLE COMPLETED (${context.iterationCount} iterations)`);
+      console.log(`${"=".repeat(80)}`);
 
     } catch (error: any) {
       if (error.message.includes("Recursion limit")) {
-        console.log("❌ Recursion Limit Error: The agent hit the recursion limit.");
-        console.log("🔧 This usually means the agent was calling tools in a loop.");
-        console.log("💡 Try rephrasing your request or breaking it into smaller parts.");
+        console.log("❌ Recursion Limit Error: An agent hit the recursion limit.");
+        console.log("🔧 This usually means an agent was calling tools in a loop.");
+        console.log("💡 The system will continue with the next iteration.");
       } else {
-        console.log(`❌ Error: ${error.message}`);
+        console.log(`❌ Error in iteration ${context.iterationCount}: ${error.message}`);
       }
     }
   }
@@ -199,5 +370,91 @@ async function runTwoAgentSystem() {
   rl.close();
 }
 
-// Start the iterative two-agent system loop
-runTwoAgentSystem().catch(console.error);
+function buildAnalystContext(context: IterationContext, currentInput: string): string {
+  let contextMsg = `ITERATION: ${context.iterationCount}
+ORIGINAL REQUEST: ${context.originalRequest}`;
+
+  if (context.iterationCount === 1) {
+    contextMsg += `\nCURRENT INPUT: ${currentInput}`;
+  }
+
+  if (context.conversationHistory.length > 0) {
+    contextMsg += `\n\nPREVIOUS CONVERSATION:`;
+    // Include last few exchanges for context
+    const recentHistory = context.conversationHistory.slice(-4);
+    recentHistory.forEach((entry, index) => {
+      contextMsg += `\n${entry.agent.toUpperCase()}: ${entry.message}`;
+    });
+  }
+
+  contextMsg += `\n\nPlease provide strategic analysis and specific guidance for the Executor.`;
+  return contextMsg;
+}
+
+function buildExecutorContext(context: IterationContext): string {
+  const lastAnalystMessage = context.conversationHistory
+    .filter(entry => entry.agent === 'analyst')
+    .slice(-1)[0];
+
+  let contextMsg = `ITERATION: ${context.iterationCount}
+ORIGINAL REQUEST: ${context.originalRequest}
+
+LATEST ANALYST GUIDANCE:
+${lastAnalystMessage?.message || 'No guidance available'}`;
+
+  if (context.conversationHistory.length > 2) {
+    contextMsg += `\n\nRECENT PROGRESS:`;
+    const recentProgress = context.conversationHistory.slice(-3, -1);
+    recentProgress.forEach((entry) => {
+      if (entry.agent === 'executor') {
+        contextMsg += `\nPrevious execution: ${entry.message.substring(0, 200)}...`;
+      }
+    });
+  }
+
+  contextMsg += `\n\nPlease execute the analyst's guidance and provide detailed feedback.`;
+  return contextMsg;
+}
+
+function shouldAskUser(analystMessage: string): boolean {
+  const askPatterns = [
+    'QUESTIONS FOR USER:',
+    'need clarification',
+    'please specify',
+    'which approach',
+    'more details',
+    'unclear about'
+  ];
+  
+  return askPatterns.some(pattern => 
+    analystMessage.toLowerCase().includes(pattern.toLowerCase())
+  );
+}
+
+function shouldContinueIterating(analystMsg: string, executorMsg: string): boolean {
+  const combinedText = (analystMsg + ' ' + executorMsg).toLowerCase();
+  
+  // ONLY stop if explicitly completed or needs user input
+  const definiteStopPatterns = [
+    'task is completely finished',
+    'everything is done',
+    'no more work needed',
+    'waiting for user input',
+    'need clarification from user',
+    'ask the user',
+    'user needs to decide'
+  ];
+  
+  // Check for definite stop conditions
+  if (definiteStopPatterns.some(pattern => combinedText.includes(pattern))) {
+    return false;
+  }
+  
+  // Continue by default - let the agents work!
+  // The system should keep iterating unless there's a clear reason to stop
+  return true;
+}
+
+// Start the iterative system
+console.log("🚀 Starting Iterative Two-Agent System...\n");
+runIterativeAgentSystem().catch(console.error);
