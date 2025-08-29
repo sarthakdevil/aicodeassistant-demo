@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VS Code AI Assistant</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <!-- Sidebar for file tree -->
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <h3>📁 File Explorer</h3>
+          <button id="refresh-tree" class="refresh-btn">🔄 Refresh</button>
+        </div>
+        <div id="file-tree" class="file-tree">Loading...</div>
+      </div>
+
+      <!-- Main content area -->
+      <div class="main-content">
+        <div class="header">
+          <h1>🕵️⚡ VS Code AI Assistant - Two-Agent System</h1>
+          <p>
+            Investigative Thinker + Action Doer working together to understand
+            and solve your coding tasks
+          </p>
+        </div>
+
+        <div class="chat-container">
+          <div id="chat-messages" class="chat-messages">
+            <div class="message assistant-message">
+              <div class="message-content">
+                <strong>🕵️ Investigative AI Assistant:</strong> Hello! I'm your
+                enhanced VS Code AI assistant with a powerful two-agent system:
+                <br /><br />
+                <strong>🔍 Investigative Thinker Agent:</strong>
+                <ul>
+                  <li>📂 Examines your project structure</li>
+                  <li>🔍 Searches through your code to understand context</li>
+                  <li>� Reads relevant files to analyze your request</li>
+                  <li>🧠 Creates detailed, context-aware plans</li>
+                </ul>
+                <strong>⚡ Action Doer Agent:</strong>
+                <ul>
+                  <li>� Creates files and folders</li>
+                  <li>✏️ Edits files with precision</li>
+                  <li>📦 Moves and organizes files</li>
+                  <li>🛠️ Executes the Thinker's plans step-by-step</li>
+                </ul>
+                <br />
+                The system will first investigate your project to understand
+                what you're talking about, then execute the perfect solution!
+                <br /><br />
+                What would you like me to help you with?
+              </div>
+            </div>
+          </div>
+
+          <div class="chat-input-container">
+            <div class="input-group">
+              <input
+                type="text"
+                id="chat-input"
+                placeholder="Type your request here... (e.g., 'Create a new file called test.js')"
+                autocomplete="off"
+              />
+              <button id="send-btn" class="send-btn">Send 📤</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="/script.js"></script>
+  </body>
+</html>
