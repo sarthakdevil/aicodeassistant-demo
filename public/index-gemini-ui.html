@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VS Code AI Assistant</title>
+    <link rel="stylesheet" href="styles-gemini-ui.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="app-container">
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <div class="file-explorer-title">
+            <span class="folder-icon">📁</span>
+            <span>File Explorer</span>
+          </div>
+          <button class="refresh-btn" id="refreshBtn">
+            <span>🔄 Refresh</span>
+          </button>
+        </div>
+        <div class="file-tree" id="fileTree">
+          <!-- File tree will be populated here -->
+        </div>
+      </div>
+
+      <!-- Main Content -->
+      <div class="main-content">
+        <!-- Header -->
+        <div class="header">
+          <div class="header-content">
+            <div class="ai-icon">🤖</div>
+            <div class="header-text">
+              <h1>VS Code AI Assistant</h1>
+              <p>Chat with your AI assistant to manage files and folders</p>
+            </div>
+            <div class="api-key-section">
+              <button class="api-key-btn" id="apiKeyBtn">
+                🔑 Configure API Key
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- API Key Modal -->
+        <div class="modal-overlay" id="apiKeyModal" style="display: none">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3>🔑 Configure Gemini API Key</h3>
+              <button class="modal-close" id="modalClose">×</button>
+            </div>
+            <div class="modal-body">
+              <p>
+                Enter your Google Gemini API key to enable AI functionality:
+              </p>
+              <input
+                type="password"
+                id="apiKeyInput"
+                placeholder="Enter your Gemini API key..."
+                class="api-key-input"
+              />
+              <div class="api-key-status" id="apiKeyStatus"></div>
+              <p class="api-key-help">
+                <strong>How to get your API key:</strong><br />
+                1. Visit
+                <a
+                  href="https://makersuite.google.com/app/apikey"
+                  target="_blank"
+                  >Google AI Studio</a
+                ><br />
+                2. Click "Create API Key"<br />
+                3. Copy the key and paste it here
+              </p>
+            </div>
+            <div class="modal-footer">
+              <button class="btn-secondary" id="clearApiKey">Clear Key</button>
+              <button class="btn-primary" id="saveApiKey">Save Key</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat Area -->
+        <div class="chat-container">
+          <div class="chat-messages" id="chatMessages">
+            <!-- Messages will appear here -->
+          </div>
+
+          <div class="chat-input-container">
+            <div class="chat-input-wrapper">
+              <span class="user-icon">👤</span>
+              <span class="user-label">You:</span>
+              <input
+                type="text"
+                id="chatInput"
+                placeholder="Type your request here... (e.g., 'Create a new file called index.js')"
+                autocomplete="off"
+              />
+              <button id="sendBtn" class="send-btn">
+                <span>Send</span>
+                <span class="send-icon">↗️</span>
+              </button>
+              <button id="stopBtn" class="stop-btn" style="display: none">
+                <span>Stop</span>
+                <span class="stop-icon">⏹️</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+          <div class="status-item">
+            <span>Status: <span id="statusText">Ready</span></span>
+          </div>
+          <div class="status-item">
+            <span>Iterations: <span id="iterationCount">0</span></span>
+          </div>
+          <div class="status-item">
+            <span>Memory: <span id="memoryCount">0</span> entries</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="script-gemini-ui.js"></script>
+  </body>
+</html>

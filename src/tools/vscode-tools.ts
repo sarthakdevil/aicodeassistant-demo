@@ -2,6 +2,7 @@ import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
+import { serperSearchTool } from "./websearch.js";
 
 // Tool 1: Create File or Folder
 export const createFileOrFolderTool = new DynamicStructuredTool({
@@ -73,6 +74,11 @@ export const listFilesTool = new DynamicStructuredTool({
               continue;
             }
 
+            // Skip node_modules directory
+            if (entry.name === 'node_modules') {
+              continue;
+            }
+
             const fullPath = path.join(dirPath, entry.name);
             const relativePath = path.relative(process.cwd(), fullPath);
             
@@ -136,17 +142,46 @@ export const readFileTool = new DynamicStructuredTool({
   }
 });
 
-// Tool 4: Edit File Content
+// Tool 4: Universal Edit File Tool (Merged edit_file and edit_file_lines)
 export const editFileTool = new DynamicStructuredTool({
   name: "edit_file",
-  description: "Edit the content of an existing file in the VS Code workspace. Can replace entire content or append to file.",
+  description: "Universal file editing tool. Can edit entire files OR specific lines. Supports overwrite, append, line replacement, line insertion, and line deletion.",
   schema: z.object({
     path: z.string().describe("The path to the file to edit"),
-    content: z.string().describe("The new content to write to the file"),
-    mode: z.enum(["overwrite", "append"]).default("overwrite").describe("Whether to overwrite the file or append to it"),
-    createIfNotExists: z.boolean().default(false).describe("Create the file if it doesn't exist")
+    editType: z.enum(["entire_file", "specific_lines"]).describe("Whether to edit the entire file or specific lines"),
+    
+    // For entire file editing
+    content: z.string().optional().describe("Content for entire file operations (required for entire_file editType)"),
+    mode: z.enum(["overwrite", "append"]).default("overwrite").describe("For entire_file: whether to overwrite or append"),
+    createIfNotExists: z.boolean().default(false).describe("Create the file if it doesn't exist"),
+    
+    // For line-specific editing
+    startLine: z.number().optional().describe("Starting line number (1-based) for specific_lines editType"),
+    endLine: z.number().optional().describe("Ending line number (1-based). If not provided, only startLine is affected"),
+    operation: z.enum(["replace", "insert", "delete"]).optional().describe("For specific_lines: replace lines, insert new lines, or delete lines"),
+    lineContent: z.string().optional().describe("New content for line replace/insert operations")
   }),
-  func: async ({ path: filePath, content, mode = "overwrite", createIfNotExists = false }: { path: string; content: string; mode?: "overwrite" | "append"; createIfNotExists?: boolean }) => {
+  func: async ({ 
+    path: filePath, 
+    editType,
+    content = "",
+    mode = "overwrite",
+    createIfNotExists = false,
+    startLine,
+    endLine,
+    operation,
+    lineContent = ""
+  }: { 
+    path: string; 
+    editType: "entire_file" | "specific_lines";
+    content?: string;
+    mode?: "overwrite" | "append";
+    createIfNotExists?: boolean;
+    startLine?: number;
+    endLine?: number;
+    operation?: "replace" | "insert" | "delete";
+    lineContent?: string;
+  }) => {
     try {
       const absolutePath = path.isAbsolute(filePath) 
         ? filePath 
@@ -154,14 +189,14 @@ export const editFileTool = new DynamicStructuredTool({
 
       // Check if file exists
       if (!fs.existsSync(absolutePath)) {
-        if (createIfNotExists) {
+        if (createIfNotExists && editType === "entire_file") {
           // Create directory if it doesn't exist
           const dirPath = path.dirname(absolutePath);
           if (!fs.existsSync(dirPath)) {
             fs.mkdirSync(dirPath, { recursive: true });
           }
         } else {
-          return `File does not exist: ${absolutePath}. Use createIfNotExists: true to create it.`;
+          return `File does not exist: ${absolutePath}${editType === "entire_file" ? ". Use createIfNotExists: true to create it." : ""}`;
         }
       }
 
@@ -170,21 +205,94 @@ export const editFileTool = new DynamicStructuredTool({
         return `Path is a directory, not a file: ${absolutePath}`;
       }
 
-      let finalContent = content;
-      
-      if (mode === "append" && fs.existsSync(absolutePath)) {
-        const existingContent = fs.readFileSync(absolutePath, 'utf8');
-        finalContent = existingContent + content;
+      if (editType === "entire_file") {
+        // ENTIRE FILE EDITING (original editFileTool logic)
+        let finalContent = content;
+        
+        if (mode === "append" && fs.existsSync(absolutePath)) {
+          const existingContent = fs.readFileSync(absolutePath, 'utf8');
+          finalContent = existingContent + content;
+        }
+
+        // Write the content
+        fs.writeFileSync(absolutePath, finalContent, 'utf8');
+        
+        const stats = fs.statSync(absolutePath);
+        const fileSize = `${(stats.size / 1024).toFixed(1)}KB`;
+        const lineCount = finalContent.split('\n').length;
+        
+        return `Successfully ${mode === "overwrite" ? "overwrote" : "appended to"} file: ${absolutePath}\nNew size: ${fileSize}\nNew line count: ${lineCount}`;
+
+      } else if (editType === "specific_lines") {
+        // LINE-SPECIFIC EDITING (original editFileLinesTool logic)
+        if (!startLine || !operation) {
+          return "startLine and operation are required for specific_lines editType";
+        }
+
+        // Read the file
+        const fileContent = fs.readFileSync(absolutePath, 'utf8');
+        const lines = fileContent.split('\n');
+        const totalLines = lines.length;
+
+        // Validate line numbers (convert to 0-based indexing)
+        const startIdx = startLine - 1;
+        const endIdx = endLine ? endLine - 1 : startIdx;
+
+        if (startIdx < 0 || startIdx >= totalLines) {
+          return `Start line ${startLine} is out of range. File has ${totalLines} lines.`;
+        }
+
+        if (endIdx < 0 || endIdx >= totalLines || endIdx < startIdx) {
+          return `End line ${endLine} is invalid. Must be between ${startLine} and ${totalLines}.`;
+        }
+
+        let newLines = [...lines];
+
+        switch (operation) {
+          case "replace":
+            if (!lineContent && lineContent !== "") {
+              return "lineContent is required for replace operation";
+            }
+            
+            // Replace lines with new content
+            const newContentLines = lineContent.split('\n');
+            newLines.splice(startIdx, endIdx - startIdx + 1, ...newContentLines);
+            break;
+
+          case "insert":
+            if (!lineContent && lineContent !== "") {
+              return "lineContent is required for insert operation";
+            }
+            
+            // Insert new lines at startLine position
+            const insertLines = lineContent.split('\n');
+            newLines.splice(startIdx, 0, ...insertLines);
+            break;
+
+          case "delete":
+            // Delete lines from startLine to endLine
+            newLines.splice(startIdx, endIdx - startIdx + 1);
+            break;
+
+          default:
+            return `Invalid operation: ${operation}`;
+        }
+
+        // Write the modified content back to file
+        const newContent = newLines.join('\n');
+        fs.writeFileSync(absolutePath, newContent, 'utf8');
+
+        const stats = fs.statSync(absolutePath);
+        const fileSize = `${(stats.size / 1024).toFixed(1)}KB`;
+        
+        return `Successfully ${operation}d lines ${startLine}${endLine ? `-${endLine}` : ''} in: ${absolutePath}\n` +
+               `Operation: ${operation}\n` +
+               `Old lines: ${totalLines}\n` +
+               `New lines: ${newLines.length}\n` +
+               `New size: ${fileSize}`;
       }
 
-      // Write the content
-      fs.writeFileSync(absolutePath, finalContent, 'utf8');
-      
-      const stats = fs.statSync(absolutePath);
-      const fileSize = `${(stats.size / 1024).toFixed(1)}KB`;
-      const lineCount = finalContent.split('\n').length;
-      
-      return `Successfully ${mode === "overwrite" ? "overwrote" : "appended to"} file: ${absolutePath}\nNew size: ${fileSize}\nNew line count: ${lineCount}`;
+      return "Invalid editType specified";
     } catch (error) {
       return `Error editing file: ${error}`;
     }
@@ -373,7 +481,6 @@ export const executeInTerminalTool = new DynamicStructuredTool({
     }
   }
 });
-
 // Export all tools as an array for easy use
 export const vscodeTools = [
   createFileOrFolderTool,
@@ -382,5 +489,6 @@ export const vscodeTools = [
   editFileTool,
   moveFileOrFolderTool,
   searchInFilesTool,
-  executeInTerminalTool
+  executeInTerminalTool,
+  serperSearchTool
 ];

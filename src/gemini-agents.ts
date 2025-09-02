@@ -163,7 +163,7 @@ async function executeTool(toolName: string, args: any) {
   }
 }
 
-class SimpleGeminiAgent {
+class GeminiAgent {
   private name: string;
   private systemPrompt: string;
   private availableFunctions: any[];
@@ -255,7 +255,7 @@ class SimpleGeminiAgent {
 }
 
 // Create simplified agents
-const analystAgent = new SimpleGeminiAgent(
+const analystAgent = new GeminiAgent(
   "Analyst",
   `You are a Strategic Analyst. Use your tools to investigate and provide guidance. Keep responses brief.`,
   [
@@ -265,7 +265,7 @@ const analystAgent = new SimpleGeminiAgent(
   ]
 );
 
-const executorAgent = new SimpleGeminiAgent(
+const executorAgent = new GeminiAgent(
   "Executor",
   `You are an Action Executor. Use your tools to make actual changes. Create files, edit files, run commands. Be brief.`,
   vscodeTools
