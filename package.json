@@ -4,12 +4,9 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev:ts-node": "ts-node --esm src/index.ts",
-    "dev:tsx": "tsx src/index.ts",
-    "web": "tsx src/app.ts",
-    "web:build": "tsc && node dist/app.js"
+    "start": "npx tsx src/index.ts",
+    "gemini": "npx tsx src/gemini-agents.ts",
+    "ui": "npx tsx src/web-ui-server.ts"
   },
   "author": "",
   "license": "ISC",
@@ -18,10 +15,11 @@
     "@langchain/core": "^0.3.72",
     "@langchain/google-genai": "^0.2.16",
     "@langchain/langgraph": "^0.4.7",
+    "@mastra/core": "^0.15.2",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "ws": "^8.18.3",
-    "zod": "^4.1.4"
+    "zod": "^4.1.5"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
